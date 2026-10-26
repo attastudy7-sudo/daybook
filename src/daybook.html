@@ -213,6 +213,25 @@ html[data-cols="1"] .book[data-view="right"] .clips.l,html[data-cols="1"] .book[
 .page.left:not(.cont) .pic-add{right:26px; top:84px; width:64px; height:84px}
 .page.left:not(.cont) .pic-add svg{width:34px; height:66px}
 .page.hasb .pic-add{display:none}
+.vbar{position:absolute; left:92px; right:84px; bottom:7px; height:30px; z-index:3; display:flex; align-items:center; gap:7px; pointer-events:none}
+.page.right .vbar{left:196px}
+.vbar>*{pointer-events:auto}
+.mic{flex:none; width:28px; height:28px; padding:0; display:grid; place-items:center; border:0; border-radius:50%; background:none; color:#6c7681; cursor:pointer; opacity:.7; transition:opacity .2s ease,background .2s ease,color .2s ease}
+.mic svg{width:17px; height:17px; fill:none; stroke:currentColor; stroke-width:1.8; stroke-linecap:round; stroke-linejoin:round}
+.mic:hover,.mic:focus-visible{opacity:1; color:var(--ink); background:rgba(0,0,0,.07)}
+.mic:focus-visible,.vchip button:focus-visible{outline:2px solid var(--ribbon); outline-offset:1px}
+.mic.rec{opacity:1; color:#f3e6c8; background:#a3361f; animation:micpulse 1.4s ease-in-out infinite}
+.mic.rec svg{fill:currentColor; stroke:none}
+@keyframes micpulse{50%{box-shadow:0 0 0 5px rgba(163,54,31,.22)}}
+.vt{font:italic 14px/1 var(--fell); color:#a3361f; min-width:34px}
+.vchip{display:flex; align-items:center; gap:3px; height:26px; padding:0 3px 0 3px; border-radius:13px; background:rgba(120,90,40,.12); color:var(--ink); box-shadow:inset 0 0 0 1px rgba(120,90,40,.22)}
+.vchip.on{background:rgba(163,54,31,.16)}
+.vchip button{width:22px; height:22px; padding:0; display:grid; place-items:center; border:0; border-radius:50%; background:none; color:inherit; cursor:pointer}
+.vchip .vp svg{width:12px; height:12px; fill:currentColor}
+.vchip .vx{opacity:0; width:18px; color:var(--muted); font:15px/1 var(--fell); transition:opacity .15s ease}
+.vchip:hover .vx,.vchip .vx:focus-visible{opacity:1}
+.vchip .vd{font:italic 13px/1 var(--fell); padding:0 2px}
+@media (prefers-reduced-motion:reduce){.mic.rec{animation:none}}
 .page.drop{outline:2px dashed var(--ribbon); outline-offset:-10px}
 .bundle{position:absolute; pointer-events:auto; cursor:pointer; user-select:none; -webkit-user-select:none; transform-origin:50% 0; transform:rotate(var(--r,0deg))}
 .bundle.drag{cursor:grabbing}
@@ -274,6 +293,7 @@ html[data-cols="1"] .book[data-view="right"] .clips.l,html[data-cols="1"] .book[
         </header>
         <div class="lines ta empty" id="taL" contenteditable="plaintext-only" role="textbox" aria-multiline="true" aria-label="Journal entry, first page" data-ph="Dear journal," spellcheck="true" autocapitalize="sentences"></div>
         <div class="pics"></div>
+        <div class="vbar" id="vbarL" data-side="l"></div>
         <button class="pic-add" type="button" data-side="l" aria-label="Clip a photo or video to this page" title="Clip a photo"><svg viewBox="0 0 26 64" aria-hidden="true"><path d="M5 60V15A8 8 0 0 1 21 15V51"/><path class="in" d="M21 51A5 5 0 0 1 11 51V22"/></svg></button>
         <div class="folio" id="folioL"></div>
       </section>
@@ -282,6 +302,7 @@ html[data-cols="1"] .book[data-view="right"] .clips.l,html[data-cols="1"] .book[
         <div class="margin"></div>
         <div class="lines ta empty" id="taR" contenteditable="plaintext-only" role="textbox" aria-multiline="true" aria-label="Journal entry, continued on second page" data-ph="" spellcheck="true" autocapitalize="sentences"></div>
         <div class="pics"></div>
+        <div class="vbar" id="vbarR" data-side="r"></div>
         <button class="pic-add" type="button" data-side="r" aria-label="Clip a photo or video to this page" title="Clip a photo"><svg viewBox="0 0 26 64" aria-hidden="true"><path d="M5 60V15A8 8 0 0 1 21 15V51"/><path class="in" d="M21 51A5 5 0 0 1 11 51V22"/></svg></button>
         <div class="count" id="count"></div>
         <div class="folio" id="folioR"></div>
@@ -351,11 +372,13 @@ html[data-cols="1"] .book[data-view="right"] .clips.l,html[data-cols="1"] .book[
   else { try { data = JSON.parse(localStorage.getItem(KEY) || '{}') || {}; } catch (e) { data = {}; } }
   var saveT = null, pendingOut = null;
   function flushSave() { clearTimeout(saveT); if (pendingOut) { var o = pendingOut; pendingOut = null; try { NATIVE.save(o); } catch (e) {} } }
+  window.__daybookFlush = flushSave;
+  document.addEventListener('visibilitychange', function () { if (NATIVE && document.visibilityState === 'hidden') flushSave(); });
   window.addEventListener('pagehide', function () { if (NATIVE && pendingOut) { var o = pendingOut; pendingOut = null; try { NATIVE.saveSync(o); } catch (e) {} } });
   function persist() {
     try {
       var out = {};
-      Object.keys(data).forEach(function (k) { var e = data[k]; if (!e.sample && (e.t || e.mood || hasPics(e))) out[k] = e; });
+      Object.keys(data).forEach(function (k) { var e = data[k]; if (!e.sample && (e.t || e.mood || hasPics(e) || hasVoice(e))) out[k] = e; });
       if (NATIVE) { pendingOut = out; clearTimeout(saveT); saveT = setTimeout(flushSave, 250); return true; }
       localStorage.setItem(KEY, JSON.stringify(out));
       return true;
@@ -538,7 +561,7 @@ html[data-cols="1"] .book[data-view="right"] .clips.l,html[data-cols="1"] .book[
     c.removeAttribute('id'); c.setAttribute('aria-hidden', 'true');
     Array.prototype.forEach.call(c.querySelectorAll('[id]'), function (n) { n.removeAttribute('id'); });
     Array.prototype.forEach.call(c.querySelectorAll('.ta'), function (t) { t.removeAttribute('contenteditable'); t.removeAttribute('role'); });
-    Array.prototype.forEach.call(c.querySelectorAll('.pic-add,.pic-handle,.pic-tools'), function (n) { n.remove(); });
+    Array.prototype.forEach.call(c.querySelectorAll('.pic-add,.pic-handle,.pic-tools,.mic,.vx'), function (n) { n.remove(); });
     Array.prototype.forEach.call(c.querySelectorAll('.bundle.sel'), function (n) { n.classList.remove('sel'); });
     Array.prototype.forEach.call(c.querySelectorAll('button'), function (b) { b.tabIndex = -1; });
     return c;
@@ -832,6 +855,7 @@ html[data-cols="1"] .book[data-view="right"] .clips.l,html[data-cols="1"] .book[
     return dbp;
   }
   function dbPut(id, blob, file) {
+    if (NATIVE && NATIVE.putBlob) return NATIVE.putBlob(id, blob);
     if (NATIVE) {
       var p = file && NATIVE.pathFor ? NATIVE.pathFor(file) : '';
       if (p) return NATIVE.putPath(id, blob.type || file.type || '', p).catch(function () { return false; });
@@ -870,7 +894,7 @@ html[data-cols="1"] .book[data-view="right"] .clips.l,html[data-cols="1"] .book[
     openDB().then(function (db) { if (db) { try { db.transaction('photos', 'readwrite').objectStore('photos').delete(id); } catch (e) {} } });
   }
   function photoUrl(id) {
-    if (NATIVE) return Promise.resolve('daybook-media://m/' + id);
+    if (NATIVE) return Promise.resolve(NATIVE.mediaUrl ? NATIVE.mediaUrl(id) : 'daybook-media://m/' + id);
     if (urls[id]) return Promise.resolve(urls[id]);
     return dbGet(id).then(function (b) { if (!b) return null; urls[id] = urls[id] || URL.createObjectURL(b); return urls[id]; });
   }
@@ -1015,7 +1039,96 @@ html[data-cols="1"] .book[data-view="right"] .clips.l,html[data-cols="1"] .book[
         var c = cbox.lastChild; c.style.left = (b.x + b.w / 2) + 'px'; c.style.transform = 'rotate(-2deg)';
       });
     });
+    renderVoice(force);
   }
+
+  /* ---------- voice notes: a short recording kept with a page ---------- */
+  var rec = null, starting = false, player = null, playing = null;
+  var MIC = '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21"/></svg>';
+  var STOP = '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="7" y="7" width="10" height="10" rx="1.5"/></svg>';
+  var PLAY = '<svg viewBox="0 0 12 12" aria-hidden="true"><path d="M2.5 1.2v9.6L10.5 6z"/></svg>';
+  var PAUSE = '<svg viewBox="0 0 12 12" aria-hidden="true"><path d="M2.5 1.5h2.5v9H2.5zM7 1.5h2.5v9H7z"/></svg>';
+  function hasVoice(e) { return !!e.v && Object.keys(e.v).some(function (k) { return e.v[k].length; }); }
+  function voicesOf(side) { var e = data[keyOf(cur)]; return (e && e.v && e.v[pageIdxOf(side)]) || []; }
+  function fmtT(s) { s = Math.max(0, Math.round(s)); return Math.floor(s / 60) + ':' + ('0' + (s % 60)).slice(-2); }
+  function renderVoice(force) {
+    ['l', 'r'].forEach(function (side) {
+      var bar = $(side === 'l' ? '#vbarL' : '#vbarR'), idx = pageIdxOf(side), list = voicesOf(side);
+      var here = !!(rec && rec.key === keyOf(cur) && rec.idx === idx);
+      var sig = keyOf(cur) + '|' + idx + '|' + here + '|' + playing + '|' + JSON.stringify(list);
+      if (!force && bar.__sig === sig) return;
+      bar.__sig = sig; bar.textContent = '';
+      var m = el('button', 'mic' + (here ? ' rec' : '')); m.type = 'button';
+      m.innerHTML = here ? STOP : MIC;
+      m.title = m.ariaLabel = here ? 'Stop recording' : 'Record a voice note on this page';
+      m.setAttribute('aria-label', m.title);
+      bar.appendChild(m);
+      if (here) { var t = el('span', 'vt'); t.textContent = fmtT((Date.now() - rec.t0) / 1000); bar.appendChild(t); }
+      list.forEach(function (v) {
+        var c = el('span', 'vchip' + (playing === v.id ? ' on' : '')); c.dataset.id = v.id;
+        var p = el('button', 'vp'); p.type = 'button'; p.innerHTML = playing === v.id ? PAUSE : PLAY;
+        p.setAttribute('aria-label', (playing === v.id ? 'Pause' : 'Play') + ' voice note, ' + fmtT(v.d));
+        var d = el('span', 'vd'); d.textContent = fmtT(v.d);
+        var x = el('button', 'vx'); x.type = 'button'; x.textContent = '\u00d7'; x.setAttribute('aria-label', 'Delete voice note'); x.title = 'Delete';
+        c.appendChild(p); c.appendChild(d); c.appendChild(x); bar.appendChild(c);
+      });
+    });
+  }
+  function toggleRec(side) {
+    if (rec) { if (rec.mr.state !== 'inactive') rec.mr.stop(); return; }
+    if (starting) return;
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia || !window.MediaRecorder) { say('Voice notes are not supported on this system.'); return; }
+    if (voicesOf(side).length >= 3) { say('Up to three voice notes fit on a page.'); return; }
+    if (player) { player.pause(); playing = null; }
+    starting = true;
+    navigator.mediaDevices.getUserMedia({ audio: true }).then(function (stream) {
+      var mime = ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4', 'audio/ogg;codecs=opus'].filter(function (m) { return MediaRecorder.isTypeSupported(m); })[0] || '';
+      var mr = mime ? new MediaRecorder(stream, { mimeType: mime }) : new MediaRecorder(stream);
+      var r = rec = { mr: mr, stream: stream, chunks: [], t0: Date.now(), key: keyOf(cur), idx: pageIdxOf(side), mime: mr.mimeType || mime };
+      mr.ondataavailable = function (ev) { if (ev.data && ev.data.size) r.chunks.push(ev.data); };
+      mr.onstop = function () { finishRec(r); };
+      mr.start(250);
+      r.timer = setInterval(function () { var t = document.querySelector('.vt'); if (t) t.textContent = fmtT((Date.now() - r.t0) / 1000); if (Date.now() - r.t0 > 10 * 60 * 1000 && mr.state !== 'inactive') mr.stop(); }, 250);
+      renderVoice(true); say('Recording\u2026 press the red button to stop.');
+    }).catch(function () { say('The microphone is unavailable, or permission was refused.'); }).then(function () { starting = false; });
+  }
+  function finishRec(r) {
+    rec = null; clearInterval(r.timer);
+    try { r.stream.getTracks().forEach(function (t) { t.stop(); }); } catch (e) {}
+    var dur = (Date.now() - r.t0) / 1000, blob = new Blob(r.chunks, { type: r.mime || 'audio/webm' });
+    if (dur < 0.6 || !blob.size) { renderVoice(true); say('Too short, nothing was saved.'); return; }
+    var id = uid();
+    dbPut(id, blob, null).then(function (ok) {
+      if (!ok) { renderVoice(true); say('Could not save the recording.'); return; }
+      var e = data[r.key] || (data[r.key] = { t: '', mood: '' });
+      e.v = e.v || {}; (e.v[r.idx] = e.v[r.idx] || []).push({ id: id, d: Math.round(dur * 10) / 10, m: blob.type });
+      persist(); renderVoice(true); say('Voice note saved.');
+    });
+  }
+  function playVoice(id) {
+    if (!player) { player = new Audio(); player.onended = player.onerror = function () { playing = null; renderVoice(true); }; }
+    if (playing === id) { player.pause(); playing = null; renderVoice(true); return; }
+    photoUrl(id).then(function (u) {
+      if (!u) throw 0;
+      player.src = u; return player.play();
+    }).then(function () { playing = id; renderVoice(true); }, function () { playing = null; renderVoice(true); say('Could not play this recording.'); });
+  }
+  function delVoice(side, id) {
+    var e = data[keyOf(cur)], i = pageIdxOf(side);
+    if (!e || !e.v || !e.v[i]) return;
+    if (playing === id && player) { player.pause(); playing = null; }
+    e.v[i] = e.v[i].filter(function (v) { return v.id !== id; });
+    if (!e.v[i].length) delete e.v[i];
+    dbDel(id); persist(); renderVoice(true); say('Voice note removed.');
+  }
+  document.addEventListener('click', function (ev) {
+    var t = ev.target.closest && ev.target.closest('.vbar .mic,.vbar .vp,.vbar .vx');
+    if (!t) return;
+    var side = t.closest('.vbar').dataset.side;
+    if (t.classList.contains('mic')) return toggleRec(side);
+    var id = t.closest('.vchip').dataset.id;
+    if (t.classList.contains('vp')) playVoice(id); else delVoice(side, id);
+  });
   function flipBundle(b, side) {
     if (b.p.length < 2) return;
     b.p.push(b.p.shift());
@@ -1134,6 +1247,15 @@ html[data-cols="1"] .book[data-view="right"] .clips.l,html[data-cols="1"] .book[
   /* ---------- settings panel ---------- */
   var gear = $('#gear'), panel = $('#settings');
   function setSettings(open) { panel.classList.toggle('open', open); gear.setAttribute('aria-expanded', open ? 'true' : 'false'); }
+  if (NATIVE && NATIVE.backup) {
+    var tipsEl = panel.querySelector('.tips');
+    [['Backup', 'Back up\u2026', function () { NATIVE.backup().then(function (r) { say(r ? 'Backed up to ' + r : 'Backup cancelled.'); }, function () { say('Backup failed.'); }); }],
+     ['Your data', 'Open folder', function () { NATIVE.openFolder(); }]].forEach(function (d) {
+      var row = el('div', 'srow'), lab = document.createElement('span'), btn = el('button', 'btn');
+      lab.textContent = d[0]; btn.type = 'button'; btn.textContent = d[1]; btn.addEventListener('click', d[2]);
+      row.appendChild(lab); row.appendChild(btn); tipsEl.parentNode.insertBefore(row, tipsEl);
+    });
+  }
   gear.addEventListener('click', function (e) { e.stopPropagation(); setSettings(!panel.classList.contains('open')); });
   document.addEventListener('click', function (e) { if (panel.classList.contains('open') && !panel.contains(e.target)) setSettings(false); });
   document.addEventListener('keydown', function (e) { if (e.key === 'Escape' && panel.classList.contains('open')) { setSettings(false); gear.focus(); } });

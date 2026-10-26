@@ -1,47 +1,46 @@
-name: Build installers
-
-# Push a tag like v1.0.0 (git tag v1.0.0 && git push --tags) to build Windows, macOS and Linux installers
-# and attach them to a GitHub release. You can also run it by hand from the Actions tab.
+name: Release
 on:
   push:
     tags: ['v*']
   workflow_dispatch:
-
 permissions:
   contents: write
-
 jobs:
   build:
     strategy:
       fail-fast: false
       matrix:
-        os: [windows-latest, macos-latest, ubuntu-latest]
+        include:
+          - os: windows-latest
+            args: '--bundles nsis'
+          - os: macos-latest
+            args: '--bundles dmg --target universal-apple-darwin'
+          - os: ubuntu-22.04
+            args: '--bundles appimage,deb'
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.os == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+      - name: Linux dependencies
+        if: matrix.os == 'ubuntu-22.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libgtk-3-dev libsoup-3.0-dev
       - run: npm ci
-      - run: npm run dist
+      - uses: tauri-apps/tauri-action@v0
         env:
-          CSC_IDENTITY_AUTO_DISCOVERY: 'false'   # no code-signing certificate configured
-      - uses: actions/upload-artifact@v4
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          name: daybook-${{ matrix.os }}
-          path: |
-            release/*.exe
-            release/*.dmg
-            release/*.AppImage
-            release/*.deb
-          if-no-files-found: error
-      - name: Attach to the release
-        if: startsWith(github.ref, 'refs/tags/')
-        uses: softprops/action-gh-release@v2
-        with:
-          files: |
-            release/*.exe
-            release/*.dmg
-            release/*.AppImage
-            release/*.deb
+          tagName: ${{ github.ref_name }}
+          releaseName: 'Daybook ${{ github.ref_name }}'
+          releaseBody: 'Download the installer for your system below. These builds are unsigned, so Windows SmartScreen and macOS Gatekeeper will warn on first launch.'
+          releaseDraft: false
+          args: ${{ matrix.args }}

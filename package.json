@@ -3,86 +3,15 @@
   "productName": "Daybook",
   "version": "1.0.0",
   "description": "A bound journal with a page for every day, kept on your own computer.",
-  "main": "main.js",
-  "author": {
-    "name": "Daybook",
-    "email": "noreply@daybook.local"
-  },
-  "license": "UNLICENSED",
   "private": true,
+  "license": "UNLICENSED",
   "scripts": {
     "build:web": "node scripts/build-web.js",
-    "start": "npm run build:web && electron .",
-    "dist": "npm run build:web && electron-builder --publish never",
-    "dist:win": "npm run build:web && electron-builder --win --publish never",
-    "dist:mac": "npm run build:web && electron-builder --mac --publish never",
-    "dist:linux": "npm run build:web && electron-builder --linux --publish never"
+    "dev": "node scripts/build-web.js && tauri dev",
+    "build": "tauri build",
+    "tauri": "tauri"
   },
   "devDependencies": {
-    "electron": "^39.8.10",
-    "electron-builder": "^26.0.12"
-  },
-  "build": {
-    "appId": "com.daybook.app",
-    "productName": "Daybook",
-    "copyright": "Copyright \u00a9 Daybook",
-    "directories": {
-      "output": "release",
-      "buildResources": "build"
-    },
-    "files": [
-      "main.js",
-      "preload.js",
-      "db.js",
-      "dist/**/*",
-      "package.json"
-    ],
-    "win": {
-      "target": [
-        {
-          "target": "nsis",
-          "arch": [
-            "x64"
-          ]
-        }
-      ],
-      "icon": "build/icon.png"
-    },
-    "nsis": {
-      "oneClick": false,
-      "perMachine": false,
-      "allowToChangeInstallationDirectory": true,
-      "createDesktopShortcut": true,
-      "createStartMenuShortcut": true,
-      "shortcutName": "Daybook",
-      "artifactName": "Daybook-Setup-${version}.${ext}"
-    },
-    "mac": {
-      "target": [
-        {
-          "target": "dmg",
-          "arch": [
-            "x64",
-            "arm64"
-          ]
-        }
-      ],
-      "category": "public.app-category.productivity",
-      "icon": "build/icon.png",
-      "artifactName": "Daybook-${version}-${arch}.${ext}"
-    },
-    "linux": {
-      "target": [
-        "AppImage",
-        "deb"
-      ],
-      "category": "Office",
-      "icon": "build/icon.png",
-      "artifactName": "Daybook-${version}-${arch}.${ext}",
-      "maintainer": "Daybook <noreply@daybook.local>",
-      "syncDesktopName": true
-    }
-  },
-  "homepage": "https://daybook.local/",
-  "desktopName": "daybook.desktop"
+    "@tauri-apps/cli": "^2"
+  }
 }
