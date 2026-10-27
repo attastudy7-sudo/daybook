@@ -5,22 +5,33 @@
   "identifier": "com.daybook.app",
   "build": {
     "frontendDist": "../dist",
-    "beforeBuildCommand": "node scripts/build-web.js"
+    "beforeBuildCommand": "node scripts/build-web.js && node scripts/fetch-model.js"
   },
   "app": {
     "withGlobalTauri": false,
     "windows": [],
     "security": {
       "csp": "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: daybook-media: http://daybook-media.localhost https://daybook-media.localhost; media-src 'self' blob: daybook-media: http://daybook-media.localhost https://daybook-media.localhost; font-src 'self'; connect-src 'self' ipc: http://ipc.localhost daybook-media: http://daybook-media.localhost; object-src 'none'; base-uri 'none'; form-action 'none'",
-      "dangerousDisableAssetCspModification": ["style-src"]
+      "dangerousDisableAssetCspModification": [
+        "style-src"
+      ]
     }
   },
   "bundle": {
     "active": true,
     "targets": "all",
-    "icon": ["icons/32x32.png", "icons/128x128.png", "icons/128x128@2x.png", "icons/icon.icns", "icons/icon.ico"],
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
     "category": "Productivity",
     "shortDescription": "A bound journal with a page for every day.",
-    "publisher": "Daybook"
+    "publisher": "Daybook",
+    "resources": [
+      "resources/*"
+    ]
   }
 }

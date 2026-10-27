@@ -21,6 +21,8 @@
     },
     delMedia: function (id) { inv('media_del', { id: id }).catch(function () {}); },
     mediaUrl: function (id) { return window.__TAURI_INTERNALS__.convertFileSrc(id, 'daybook-media'); },
+    canTranscribe: function () { return inv('stt_ready'); },
+    transcribe: function (pcm) { return inv('transcribe', pcm.buffer.slice(pcm.byteOffset, pcm.byteOffset + pcm.byteLength)); },
     backup: function () { return inv('backup_data'); },
     openFolder: function () { return inv('open_data_dir'); }
   };

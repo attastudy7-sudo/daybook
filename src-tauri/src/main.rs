@@ -14,7 +14,99 @@ use tauri::{
     ipc::{InvokeBody, Request},
     AppHandle, Manager, State, WebviewUrl, WebviewWindowBuilder, WindowEvent,
 };
+use std::sync::Arc;
 use tauri_plugin_opener::OpenerExt;
+use whisper_rs::{FullParams, SamplingStrategy, WhisperContext, WhisperContextParameters};
+
+/// The speech model is loaded once, on first use, and kept for later notes.
+struct Stt {
+    ctx: Mutex<Option<Arc<WhisperContext>>>,
+}
+
+fn find_model(app: &AppHandle) -> Option<PathBuf> {
+    if let Ok(p) = std::env::var("DAYBOOK_MODEL") {
+        let p = PathBuf::from(p);
+        if p.is_file() { return Some(p); }
+    }
+    let mut dirs: Vec<PathBuf> = Vec::new();
+    if let Ok(r) = app.path().resource_dir() { dirs.push(r.join("resources")); dirs.push(r); }
+    #[cfg(debug_assertions)]
+    dirs.push(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("resources"));
+    for d in dirs {
+        let Ok(rd) = fs::read_dir(&d) else { continue };
+        for e in rd.flatten() {
+            let n = e.file_name().to_string_lossy().to_string();
+            // a real model is tens of MB; ignore stubs and partial downloads
+            if n.starts_with("ggml-") && n.ends_with(".bin") && e.metadata().map(|m| m.len() > 10_000_000).unwrap_or(false) {
+                return Some(e.path());
+            }
+        }
+    }
+    None
+}
+
+#[tauri::command]
+fn stt_ready(app: AppHandle) -> bool {
+    #[cfg(feature = "e2e")]
+    if std::env::var("DAYBOOK_FAKE_STT").is_ok() { return true; }
+    find_model(&app).is_some()
+}
+
+fn run_stt(app: &AppHandle, body: &[u8]) -> Result<String, String> {
+    let samples: Vec<f32> = body.chunks_exact(4).map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]])).collect();
+    if samples.len() < 8000 { return Ok(String::new()); }
+    #[cfg(feature = "e2e")]
+    if std::env::var("DAYBOOK_FAKE_STT").is_ok() {
+        let peak = samples.iter().fold(0f32, |m, x| m.max(x.abs()));
+        return Ok(format!("fake transcript of {} samples, peak {:.2}", samples.len(), peak));
+    }
+    let model = find_model(app).ok_or("The speech model is not installed.")?;
+    let stt = app.state::<Stt>();
+    let ctx = {
+        let mut g = stt.ctx.lock().map_err(|_| "lock")?;
+        if g.is_none() {
+            let c = WhisperContext::new_with_params(model.to_str().ok_or("bad path")?, WhisperContextParameters::default())
+                .map_err(|e| format!("could not load the speech model: {e}"))?;
+            *g = Some(Arc::new(c));
+        }
+        g.as_ref().unwrap().clone()
+    };
+    let mut state = ctx.create_state().map_err(|e| e.to_string())?;
+    let mut p = FullParams::new(SamplingStrategy::Greedy { best_of: 1 });
+    let threads = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(2).clamp(1, 8) as i32;
+    p.set_n_threads(threads);
+    let english_only = model.file_name().map(|n| n.to_string_lossy().contains(".en")).unwrap_or(false);
+    p.set_language(Some(if english_only { "en" } else { "auto" }));
+    p.set_print_special(false);
+    p.set_print_progress(false);
+    p.set_print_realtime(false);
+    p.set_print_timestamps(false);
+    p.set_no_context(true);
+    p.set_suppress_blank(true);
+    p.set_suppress_nst(true);
+    state.full(p, &samples).map_err(|e| e.to_string())?;
+    let mut out = String::new();
+    for seg in state.as_iter() {
+        let t = seg.to_str_lossy().map_err(|e| e.to_string())?;
+        let t = t.trim();
+        // skip whole-segment sound tags such as [BLANK_AUDIO] or (music)
+        let tag = (t.starts_with('[') && t.ends_with(']')) || (t.starts_with('(') && t.ends_with(')'));
+        if t.is_empty() || tag { continue; }
+        if !out.is_empty() { out.push(' '); }
+        out.push_str(t);
+    }
+    Ok(out)
+}
+
+/// Body: raw little-endian f32 samples, 16 kHz mono.
+#[tauri::command]
+async fn transcribe(app: AppHandle, request: Request<'_>) -> Result<String, String> {
+    let body = match request.body() {
+        InvokeBody::Raw(b) => b.clone(),
+        _ => return Err("expected raw audio".into()),
+    };
+    tauri::async_runtime::spawn_blocking(move || run_stt(&app, &body)).await.map_err(|e| e.to_string())?
+}
 
 struct Store {
     conn: Mutex<Connection>,
@@ -322,6 +414,7 @@ fn main() {
             migrate(&conn)?;
             let boot = load_all(&conn).to_string();
             app.manage(Store { conn: Mutex::new(conn), dir, media });
+            app.manage(Stt { ctx: Mutex::new(None) });
             gc(&app.state::<Store>());
 
             let mut init = format!("window.__DAYBOOK_BOOT = {boot};\n{}", include_str!("shim.js"));
@@ -353,8 +446,8 @@ fn main() {
             }
         });
     #[cfg(feature = "e2e")]
-    { builder = builder.invoke_handler(tauri::generate_handler![db_save, media_put_chunk, media_del, backup_data, open_data_dir, exit_app, e2e_report]); }
+    { builder = builder.invoke_handler(tauri::generate_handler![db_save, media_put_chunk, media_del, backup_data, open_data_dir, exit_app, stt_ready, transcribe, e2e_report]); }
     #[cfg(not(feature = "e2e"))]
-    { builder = builder.invoke_handler(tauri::generate_handler![db_save, media_put_chunk, media_del, backup_data, open_data_dir, exit_app]); }
+    { builder = builder.invoke_handler(tauri::generate_handler![db_save, media_put_chunk, media_del, backup_data, open_data_dir, exit_app, stt_ready, transcribe]); }
     builder.run(tauri::generate_context!()).expect("error while running Daybook");
 }

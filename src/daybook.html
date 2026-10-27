@@ -230,6 +230,7 @@ html[data-cols="1"] .book[data-view="right"] .clips.l,html[data-cols="1"] .book[
 .vchip .vp svg{width:12px; height:12px; fill:currentColor}
 .vchip .vx{opacity:0; width:18px; color:var(--muted); font:15px/1 var(--fell); transition:opacity .15s ease}
 .vchip:hover .vx,.vchip .vx:focus-visible{opacity:1}
+.vchip.busy .vd::after{content:" \2026"}
 .vchip .vd{font:italic 13px/1 var(--fell); padding:0 2px}
 @media (prefers-reduced-motion:reduce){.mic.rec{animation:none}}
 .page.drop{outline:2px dashed var(--ribbon); outline-offset:-10px}
@@ -1043,7 +1044,7 @@ html[data-cols="1"] .book[data-view="right"] .clips.l,html[data-cols="1"] .book[
   }
 
   /* ---------- voice notes: a short recording kept with a page ---------- */
-  var rec = null, starting = false, player = null, playing = null;
+  var rec = null, starting = false, player = null, playing = null, tBusy = {}, sttOK = null;
   var MIC = '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21"/></svg>';
   var STOP = '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="7" y="7" width="10" height="10" rx="1.5"/></svg>';
   var PLAY = '<svg viewBox="0 0 12 12" aria-hidden="true"><path d="M2.5 1.2v9.6L10.5 6z"/></svg>';
@@ -1055,7 +1056,7 @@ html[data-cols="1"] .book[data-view="right"] .clips.l,html[data-cols="1"] .book[
     ['l', 'r'].forEach(function (side) {
       var bar = $(side === 'l' ? '#vbarL' : '#vbarR'), idx = pageIdxOf(side), list = voicesOf(side);
       var here = !!(rec && rec.key === keyOf(cur) && rec.idx === idx);
-      var sig = keyOf(cur) + '|' + idx + '|' + here + '|' + playing + '|' + JSON.stringify(list);
+      var sig = keyOf(cur) + '|' + idx + '|' + here + '|' + playing + '|' + Object.keys(tBusy).join() + '|' + JSON.stringify(list);
       if (!force && bar.__sig === sig) return;
       bar.__sig = sig; bar.textContent = '';
       var m = el('button', 'mic' + (here ? ' rec' : '')); m.type = 'button';
@@ -1065,7 +1066,7 @@ html[data-cols="1"] .book[data-view="right"] .clips.l,html[data-cols="1"] .book[
       bar.appendChild(m);
       if (here) { var t = el('span', 'vt'); t.textContent = fmtT((Date.now() - rec.t0) / 1000); bar.appendChild(t); }
       list.forEach(function (v) {
-        var c = el('span', 'vchip' + (playing === v.id ? ' on' : '')); c.dataset.id = v.id;
+        var c = el('span', 'vchip' + (playing === v.id ? ' on' : '') + (tBusy[v.id] ? ' busy' : '')); c.dataset.id = v.id; if (v.x) c.title = v.x;
         var p = el('button', 'vp'); p.type = 'button'; p.innerHTML = playing === v.id ? PAUSE : PLAY;
         p.setAttribute('aria-label', (playing === v.id ? 'Pause' : 'Play') + ' voice note, ' + fmtT(v.d));
         var d = el('span', 'vd'); d.textContent = fmtT(v.d);
@@ -1074,36 +1075,90 @@ html[data-cols="1"] .book[data-view="right"] .clips.l,html[data-cols="1"] .book[
       });
     });
   }
+  /* Recording captures raw audio itself (no MediaRecorder), so it behaves the same in every system webview.
+     It is kept as a 16 kHz mono WAV: plays anywhere, and is exactly what the speech model wants. */
+  var SR = 16000;
+  function toWav(pcm) {
+    var n = pcm.length, buf = new ArrayBuffer(44 + n * 2), v = new DataView(buf);
+    function str(o, t) { for (var i = 0; i < t.length; i++) v.setUint8(o + i, t.charCodeAt(i)); }
+    str(0, 'RIFF'); v.setUint32(4, 36 + n * 2, true); str(8, 'WAVE'); str(12, 'fmt '); v.setUint32(16, 16, true); v.setUint16(20, 1, true); v.setUint16(22, 1, true);
+    v.setUint32(24, SR, true); v.setUint32(28, SR * 2, true); v.setUint16(32, 2, true); v.setUint16(34, 16, true); str(36, 'data'); v.setUint32(40, n * 2, true);
+    for (var i = 0; i < n; i++) { var x = Math.max(-1, Math.min(1, pcm[i])); v.setInt16(44 + i * 2, x < 0 ? x * 0x8000 : x * 0x7fff, true); }
+    return new Blob([buf], { type: 'audio/wav' });
+  }
+  function downsample(parts, sr) {
+    var total = 0; parts.forEach(function (c) { total += c.length; });
+    var all = new Float32Array(total), o = 0; parts.forEach(function (c) { all.set(c, o); o += c.length; });
+    if (sr === SR) return all;
+    var ratio = sr / SR, n = Math.floor(total / ratio), out = new Float32Array(n);
+    for (var i = 0; i < n; i++) {
+      var a = Math.floor(i * ratio), b = Math.min(total, Math.max(a + 1, Math.floor((i + 1) * ratio))), sum = 0;
+      for (var k = a; k < b; k++) sum += all[k];
+      out[i] = sum / (b - a);
+    }
+    return out;
+  }
+  function stopRec() { if (rec && !rec.done) finishRec(rec); }
   function toggleRec(side) {
-    if (rec) { if (rec.mr.state !== 'inactive') rec.mr.stop(); return; }
+    if (rec) { stopRec(); return; }
+    var AC = window.AudioContext || window.webkitAudioContext;
     if (starting) return;
-    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia || !window.MediaRecorder) { say('Voice notes are not supported on this system.'); return; }
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia || !AC) { say('Voice notes are not supported on this system.'); return; }
     if (voicesOf(side).length >= 3) { say('Up to three voice notes fit on a page.'); return; }
     if (player) { player.pause(); playing = null; }
     starting = true;
-    navigator.mediaDevices.getUserMedia({ audio: true }).then(function (stream) {
-      var mime = ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4', 'audio/ogg;codecs=opus'].filter(function (m) { return MediaRecorder.isTypeSupported(m); })[0] || '';
-      var mr = mime ? new MediaRecorder(stream, { mimeType: mime }) : new MediaRecorder(stream);
-      var r = rec = { mr: mr, stream: stream, chunks: [], t0: Date.now(), key: keyOf(cur), idx: pageIdxOf(side), mime: mr.mimeType || mime };
-      mr.ondataavailable = function (ev) { if (ev.data && ev.data.size) r.chunks.push(ev.data); };
-      mr.onstop = function () { finishRec(r); };
-      mr.start(250);
-      r.timer = setInterval(function () { var t = document.querySelector('.vt'); if (t) t.textContent = fmtT((Date.now() - r.t0) / 1000); if (Date.now() - r.t0 > 10 * 60 * 1000 && mr.state !== 'inactive') mr.stop(); }, 250);
-      renderVoice(true); say('Recording\u2026 press the red button to stop.');
-    }).catch(function () { say('The microphone is unavailable, or permission was refused.'); }).then(function () { starting = false; });
+    navigator.mediaDevices.getUserMedia({ audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true } }).then(function (stream) {
+      var ctx = new AC(), src = ctx.createMediaStreamSource(stream), proc = ctx.createScriptProcessor(4096, 1, 1), mute = ctx.createGain();
+      mute.gain.value = 0;
+      var r = rec = { stream: stream, ctx: ctx, src: src, proc: proc, mute: mute, parts: [], sr: ctx.sampleRate, t0: Date.now(), key: keyOf(cur), idx: pageIdxOf(side), done: false };
+      proc.onaudioprocess = function (ev) { if (!r.done) r.parts.push(new Float32Array(ev.inputBuffer.getChannelData(0))); };
+      src.connect(proc); proc.connect(mute); mute.connect(ctx.destination);
+      if (ctx.state === 'suspended' && ctx.resume) ctx.resume();
+      r.timer = setInterval(function () { var t = document.querySelector('.vt'); if (t) t.textContent = fmtT((Date.now() - r.t0) / 1000); if (Date.now() - r.t0 > 10 * 60 * 1000) stopRec(); }, 250);
+      renderVoice(true); say('Recording… press the red button to stop.');
+    }).catch(function (err) { window.__voiceErr = String(err && (err.stack || err.name || err)); say(err && err.name === 'NotAllowedError' ? 'Microphone permission was refused. Allow it in your system settings and try again.' : 'The microphone could not be started.'); }).then(function () { starting = false; });
   }
   function finishRec(r) {
-    rec = null; clearInterval(r.timer);
-    try { r.stream.getTracks().forEach(function (t) { t.stop(); }); } catch (e) {}
-    var dur = (Date.now() - r.t0) / 1000, blob = new Blob(r.chunks, { type: r.mime || 'audio/webm' });
-    if (dur < 0.6 || !blob.size) { renderVoice(true); say('Too short, nothing was saved.'); return; }
-    var id = uid();
+    r.done = true; rec = null; clearInterval(r.timer);
+    try { r.proc.disconnect(); r.src.disconnect(); r.mute.disconnect(); r.stream.getTracks().forEach(function (t) { t.stop(); }); r.ctx.close(); } catch (e) {}
+    var pcm = downsample(r.parts, r.sr), dur = pcm.length / SR;
+    if (dur < 0.6) { renderVoice(true); say('Too short, nothing was saved.'); return; }
+    var blob = toWav(pcm), id = uid();
     dbPut(id, blob, null).then(function (ok) {
       if (!ok) { renderVoice(true); say('Could not save the recording.'); return; }
       var e = data[r.key] || (data[r.key] = { t: '', mood: '' });
-      e.v = e.v || {}; (e.v[r.idx] = e.v[r.idx] || []).push({ id: id, d: Math.round(dur * 10) / 10, m: blob.type });
+      e.v = e.v || {}; var note = { id: id, d: Math.round(dur * 10) / 10, m: 'audio/wav' }; (e.v[r.idx] = e.v[r.idx] || []).push(note);
       persist(); renderVoice(true); say('Voice note saved.');
+      transcribeNote(r.key, r.idx, note, pcm);
     });
+  }
+  /* transcription: the desktop app runs a bundled speech model and the words are written into the page's text */
+  function sttAvail() {
+    if (!NATIVE || !NATIVE.transcribe || prefs.transcribe === false) return Promise.resolve(false);
+    if (sttOK !== null) return Promise.resolve(sttOK);
+    return Promise.resolve(NATIVE.canTranscribe()).then(function (v) { return (sttOK = !!v); }, function () { return (sttOK = false); });
+  }
+  function insertSpoken(key, idx, text) {
+    var e = data[key] || (data[key] = { t: '', mood: '' }), t = e.t || '';
+    var ch = key === keyOf(cur) ? chunks : paginate(t), pos = 0;
+    for (var i = 0; i <= idx && i < ch.length; i++) pos += ch[i].length;
+    if (idx >= ch.length) pos = t.length;
+    var pre = '', post = '';
+    if (pos >= t.length) pre = !t ? '' : /\n\n$/.test(t) ? '' : /\n$/.test(t) ? '\n' : '\n\n';
+    else { if (pos > 0 && !/\s$/.test(t.slice(0, pos))) pre = ' '; if (!/^\s/.test(t.slice(pos))) post = ' '; }
+    e.t = t.slice(0, pos) + pre + text + post + t.slice(pos); delete e.sample;
+    persist(); if (key === keyOf(cur)) render();
+  }
+  function transcribeNote(key, idx, note, pcm) {
+    sttAvail().then(function (ok) {
+      if (!ok) { if (NATIVE && NATIVE.transcribe && prefs.transcribe !== false) say('Voice note saved. The speech model is missing, so it was not transcribed.'); return; }
+      tBusy[note.id] = 1; renderVoice(true); say('Transcribing\u2026');
+      return NATIVE.transcribe(pcm).then(function (text) {
+        text = String(text || '').replace(/\s+/g, ' ').trim();
+        if (!text) { say('Voice note saved. No speech was heard.'); return; }
+        note.x = text; insertSpoken(key, idx, text); say('Transcribed onto the page.');
+      });
+    }).catch(function () { say('Voice note saved, but it could not be transcribed.'); }).then(function () { delete tBusy[note.id]; renderVoice(true); });
   }
   function playVoice(id) {
     if (!player) { player = new Audio(); player.onended = player.onerror = function () { playing = null; renderVoice(true); }; }
@@ -1250,7 +1305,9 @@ html[data-cols="1"] .book[data-view="right"] .clips.l,html[data-cols="1"] .book[
   if (NATIVE && NATIVE.backup) {
     var tipsEl = panel.querySelector('.tips');
     [['Backup', 'Back up\u2026', function () { NATIVE.backup().then(function (r) { say(r ? 'Backed up to ' + r : 'Backup cancelled.'); }, function () { say('Backup failed.'); }); }],
-     ['Your data', 'Open folder', function () { NATIVE.openFolder(); }]].forEach(function (d) {
+     ['Your data', 'Open folder', function () { NATIVE.openFolder(); }]].concat(NATIVE.transcribe ? [['Voice notes', prefs.transcribe === false ? 'Transcribe: off' : 'Transcribe: on', function () {
+       prefs.transcribe = prefs.transcribe === false ? true : false; savePrefs(); this.textContent = prefs.transcribe === false ? 'Transcribe: off' : 'Transcribe: on';
+     }]] : []).forEach(function (d) {
       var row = el('div', 'srow'), lab = document.createElement('span'), btn = el('button', 'btn');
       lab.textContent = d[0]; btn.type = 'button'; btn.textContent = d[1]; btn.addEventListener('click', d[2]);
       row.appendChild(lab); row.appendChild(btn); tipsEl.parentNode.insertBefore(row, tipsEl);

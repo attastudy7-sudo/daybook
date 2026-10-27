@@ -7,9 +7,10 @@
   "license": "UNLICENSED",
   "scripts": {
     "build:web": "node scripts/build-web.js",
-    "dev": "node scripts/build-web.js && tauri dev",
+    "dev": "node scripts/build-web.js && node scripts/fetch-model.js && tauri dev",
     "build": "tauri build",
-    "tauri": "tauri"
+    "tauri": "tauri",
+    "fetch-model": "node scripts/fetch-model.js"
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2"
